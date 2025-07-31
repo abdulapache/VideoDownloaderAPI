@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Video Downloader</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+        body { font-family: Arial; background: #f4f4f4; padding: 30px; }
+        .container { max-width: 500px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        input, select, button { width: 100%; padding: 10px; margin-top: 10px; border-radius: 4px; border: 1px solid #ccc; }
+        button { background: #007bff; color: #fff; border: none; }
+        button:hover { background: #0056b3; }
+        #status { margin-top: 20px; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Video Downloader</h2>
+        <input type="text" id="videoUrl" placeholder="Enter video URL">
+        <select id="format">
+            <option value="mp4">MP4 (Standard)</option>
+            <option value="mp3">MP3 (Audio Only)</option>
+            <option value="hd">HD 720p</option>
+            <option value="4k">4K 2160p</option>
+        </select>
+        <button onclick="download()">Download</button>
+        <div id="status"></div>
+    </div>
+
+    <script>
+        function download() {
+            const url = $("#videoUrl").val();
+            const format = $("#format").val();
+            $("#status").text("Downloading...");
+
+            $.ajax({
+                type: "POST",
+                url: "http://localhost:5000/api/download",
+                contentType: "application/json",
+                data: JSON.stringify({ url: url, format: format }),
+                success: function (res) {
+                    if (res.success) {
+                        $("#status").html(`<a href="${res.file_url}" download style="color:green;">⬇️ Click here if download doesn't start automatically</a>`);
+                        const link = document.createElement('a');
+                        link.href = res.file_url;
+                        link.download = "";
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                    } else {
+                        $("#status").html("<span style='color:red;'>❌ " + res.message + "</span>");
+                    }
+                },
+                error: function (err) {
+                    $("#status").html("<span style='color:red;'>❌ Error: " + (err.responseJSON?.message || "Server error") + "</span>");
+                }
+            });
+        }
+    </script>
+</body>
+</html>
