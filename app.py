@@ -1,72 +1,78 @@
-from flask import Flask, request
-from flask_restx import Api, Resource, fields
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
 import yt_dlp
 import os
 import shutil
-import socket
 
-# Flask App and Swagger API Setup
 app = Flask(__name__)
-api = Api(app, version='1.0', title='Video Downloader API',
-          description='Download videos from YouTube, Facebook, Instagram etc. using yt-dlp',
-          doc='/swagger')  # Swagger UI available at /swagger
+CORS(app)
 
-ns = api.namespace('api', description='Download operations')
+DOWNLOAD_DIR = os.path.join(os.getcwd(), 'downloads')
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# Define expected input model
-download_model = api.model('DownloadRequest', {
-    'url': fields.String(required=True, description='Video URL to download')
-})
+@app.route('/api/download', methods=['POST'])
+def download_video():
+    try:
+        data = request.get_json()
+        url = data.get('url')
+        format_type = data.get('format', 'mp4')
 
-# API Endpoint
-@ns.route('/download')
-class VideoDownloader(Resource):
-    @ns.expect(download_model)
-    def post(self):
-        """Download video from a given URL"""
-        try:
-            url = request.json.get('url')
-            if not url:
-                return {'success': False, 'message': 'No URL provided'}, 400
+        if not url:
+            return jsonify({'success': False, 'message': '❌ No URL provided'}), 400
 
-            if not shutil.which("ffmpeg"):
-                return {'success': False, 'message': 'ffmpeg not found in PATH'}, 500
+        if not shutil.which("ffmpeg"):
+            return jsonify({'success': False, 'message': '❌ ffmpeg not found in PATH'}), 500
 
-            os.makedirs('downloads', exist_ok=True)
-
-            ydl_opts = {
-                'outtmpl': 'downloads/%(title).50s.%(ext)s',
-                'restrictfilenames': True,
-                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]',
-                'merge_output_format': 'mp4',
-                'noplaylist': True,
-                'socket_timeout': 30,
-                'quiet': True,
-                'prefer_ffmpeg': True,
-                'addmetadata': True,
-                'cookiefile': 'cookies.txt',
-                'postprocessors': [
-                    {'key': 'FFmpegVideoConvertor', 'preferedformat': 'mp4'},
-                    {'key': 'FFmpegMetadata'},
-                    {'key': 'FFmpegEmbedSubtitle'}
-                ],
-                'http_headers': {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-                }
+        ydl_opts = {
+            'outtmpl': f'{DOWNLOAD_DIR}/%(title).50s.%(ext)s',
+            'restrictfilenames': True,
+            'quiet': True,
+            'noplaylist': True,
+            'merge_output_format': 'mp4',
+            'prefer_ffmpeg': True,
+            'postprocessors': [],
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0'
             }
+        }
 
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+        # Handle format
+        if format_type == 'mp3':
+            ydl_opts['format'] = 'bestaudio/best'
+            ydl_opts['postprocessors'] = [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }]
+        elif format_type == 'hd':
+            ydl_opts['format'] = 'bestvideo[height<=720]+bestaudio/best[height<=720]'
+        elif format_type == '4k':
+            ydl_opts['format'] = 'bestvideo[height>=2160]+bestaudio/best[height>=2160]'
+        else:  # default mp4
+            ydl_opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]'
+            ydl_opts['postprocessors'] = [{'key': 'FFmpegVideoConvertor', 'preferedformat': 'mp4'}]
 
-            return {'success': True, 'message': '✅ Download completed successfully.'}
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            file_path = ydl.prepare_filename(info)
+            if format_type == 'mp3':
+                file_path = file_path.rsplit('.', 1)[0] + '.mp3'
+            file_name = os.path.basename(file_path)
 
-        except socket.timeout:
-            return {'success': False, 'message': '⏱️ Download timed out. Try again.'}, 500
-        except yt_dlp.utils.DownloadError as e:
-            return {'success': False, 'message': f'⚠️ yt-dlp error: {str(e)}'}, 500
-        except Exception as e:
-            return {'success': False, 'message': f'❌ Error: {str(e)}'}, 500
+        return jsonify({
+            'success': True,
+            'message': '✅ Download complete!',
+            'file_url': f'http://localhost:5000/downloaded/{file_name}'
+        })
 
-# Start Flask App
+    except yt_dlp.utils.DownloadError as e:
+        return jsonify({'success': False, 'message': f'⚠️ yt-dlp error: {str(e)}'}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'❌ Error: {str(e)}'}), 500
+
+@app.route('/downloaded/<path:filename>', methods=['GET'])
+def serve_file(filename):
+    return send_from_directory(DOWNLOAD_DIR, filename, as_attachment=True)
+
 if __name__ == '__main__':
     app.run(debug=True)
